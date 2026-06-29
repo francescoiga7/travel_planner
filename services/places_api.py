@@ -114,13 +114,27 @@ class PlacesService:
 
                 category = tags.get('tourism', tags.get('historic', 'attraction'))
 
+                # --- NUOVA LOGICA DI ASSEGNAZIONE TEMPI ---
+                category_lower = category.lower()
+                if "museum" in category_lower or "vatican" in name.lower() or "musei" in name.lower():
+                    duration = 120  # 2 ore per musei importanti
+                elif "archaeological" in category_lower or "colosseo" in name.lower() or "foro" in name.lower():
+                    duration = 90   # 1 ora e mezza per aree archeologiche grandi
+                elif "church" in category_lower or "basilica" in category_lower or "cathedral" in category_lower:
+                    duration = 45   # 45 minuti per luoghi di culto grandi
+                elif "viewpoint" in category_lower or "fountain" in category_lower or "square" in category_lower:
+                    duration = 20   # 20 minuti per piazze, panorami o fontane (es. Fontana di Trevi)
+                else:
+                    duration = 60   # 1 ora di default per attrazioni generiche
+
                 place = Place(
                     id=str(el['id']),
                     name=name,
                     lat=p_lat,
                     lon=p_lon,
                     category=category,
-                    rating=rating
+                    rating=rating,
+                    visit_duration_minutes=duration  # <-- Passiamo la durata corretta
                 )
                 
                 places_with_score.append({"place": place, "score": score})

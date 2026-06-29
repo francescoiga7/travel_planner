@@ -7,6 +7,7 @@ class Place(BaseModel):
     lon: float
     category: str
     rating: int = Field(ge=1, le=5, description="Simulated 1-5 rating based on popularity")
+    visit_duration_minutes: int = 60  # <-- NUOVO: Tempo medio di permanenza stimato (default 1 ora)
 
 class RouteSegment(BaseModel):
     from_place: str
@@ -14,7 +15,9 @@ class RouteSegment(BaseModel):
     distance_meters: float
     duration_minutes: float
     transport_mode: str
-    additional_info: str | None = None  # e.g., "Metro Linea A, 1.50€" or "Volo diretto, 50€"
+    arrival_time: str | None = None  # <-- NUOVO: es. "09:15"
+    departure_time: str | None = None  # <-- NUOVO: es. "11:15" dopo la visita
+    additional_info: str | None = None
 
 class ItineraryDay(BaseModel):
     day_number: int

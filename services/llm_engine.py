@@ -137,3 +137,60 @@ class LLMEngine:
         except Exception as e:
             logger.error(f"Errore parsing logistica oraria: {e}. Raw: {raw_response}")
             return [], [f"Errore validazione struttura: {str(e)}"]
+    
+    def get_country_hubs(self, country: str) -> list[str]:
+        """
+        Interroga Ollama in JSON Mode per ottenere l'elenco delle vere 
+        località turistiche principali (Hub) di una nazione.
+        """
+        prompt = f"""
+        Task: Identifica le 10 città, isole o macro-regioni turistiche principali e più famose in assoluto per la nazione '{country}'. 
+        Questi punti fungeranno da tappe principali (hub) del viaggio.
+        
+        Usa ESATTAMENTE questo schema JSON, senza aggiungere spiegazioni o testo prima/dopo:
+        {{
+          "hubs": ["Nome Reale Località 1", "Nome Reale Località 2", "Nome Reale Località 3"]
+        }}
+        
+        Esempio per Indonesia:
+        {{
+          "hubs": ["Jakarta", "Yogyakarta", "Ubud (Bali)", "Lombok", "Isole Komodo"]
+        }}
+        """
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": "Sei un'API geografica. Rispondi ESCLUSIVAMENTE in formato JSON valido."},
+                {"role": "user", "content": prompt}
+            ],
+            "stream": False,
+            "format": "json",
+            "options": {
+                "temperature": 0.0,
+                "num_ctx": 4096,
+                "num_predict": 1024
+            }
+        }
+        
+        raw_response = self._generate_chat(payload)
+        if not raw_response:
+            # Fallback hardcoded di sicurezza specifico nel caso estremo in cui Ollama sia spento/in timeout
+            if country.lower() == "indonesia":
+                return ["Jakarta", "Yogyakarta", "Ubud (Bali)", "Lombok", "Isole Komodo"]
+            elif country.lower() == "messico" or country.lower() == "mexico":
+                return ["Città del Messico", "Cancún", "Oaxaca", "Merida", "Tulum"]
+            return [f"Centro Principale {country}"]
+            
+        try:
+            data = json.loads(raw_response)
+            hubs = data.get("hubs", [])
+            if hubs:
+                return hubs
+        except Exception as e:
+            logger.error(f"Errore parsing hub JSON: {e}. Raw: {raw_response}")
+            
+        # Fallback finale se il JSON è strutturato male
+        if country.lower() == "indonesia":
+            return ["Jakarta", "Yogyakarta", "Ubud (Bali)", "Lombok", "Isole Komodo"]
+        return [country]
