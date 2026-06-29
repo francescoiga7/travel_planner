@@ -52,11 +52,7 @@ class LLMEngine:
             ],
             "stream": False,
             "format": "json",
-            "options": {
-                "temperature": 0.0,
-                "num_ctx": 4096,
-                "num_predict": 4096
-            }
+            "options": {"temperature": 0.0, "num_ctx": 4096, "num_predict": 4096}
         }
         
         raw_response = self._generate_chat(payload)
@@ -65,8 +61,7 @@ class LLMEngine:
             
         try:
             data = json.loads(raw_response)
-            places_data = data.get("places", [])
-            return [Place(**p) for p in places_data]
+            return [Place(**p) for p in data.get("places", [])]
         except Exception as e:
             logger.error(f"Errore parsing fallback JSON: {e}. Raw: {raw_response}")
             return []
@@ -94,11 +89,7 @@ class LLMEngine:
             ],
             "stream": False,
             "format": "json",
-            "options": {
-                "temperature": 0.0,
-                "num_ctx": 4096,
-                "num_predict": 2048
-            }
+            "options": {"temperature": 0.0, "num_ctx": 4096, "num_predict": 2048}
         }
         
         raw_response = self._generate_chat(payload)
@@ -139,24 +130,12 @@ class LLMEngine:
             return [], [f"Errore validazione struttura: {str(e)}"]
     
     def get_country_hubs(self, country: str) -> list[str]:
-        """
-        Interroga Ollama in JSON Mode per ottenere l'elenco delle vere 
-        località turistiche principali (Hub) di una nazione.
-        """
-        prompt = f"""
-        Task: Identifica le 10 città, isole o macro-regioni turistiche principali e più famose in assoluto per la nazione '{country}'. 
-        Questi punti fungeranno da tappe principali (hub) del viaggio.
-        
-        Usa ESATTAMENTE questo schema JSON, senza aggiungere spiegazioni o testo prima/dopo:
-        {{
-          "hubs": ["Nome Reale Località 1", "Nome Reale Località 2", "Nome Reale Località 3"]
-        }}
-        
-        Esempio per Indonesia:
-        {{
-          "hubs": ["Jakarta", "Yogyakarta", "Ubud (Bali)", "Lombok", "Isole Komodo"]
-        }}
-        """
+        """Interroga Ollama caricando il prompt esterno per ottenere gli hub turistici principali."""
+        try:
+            template = self._load_prompt("attractions_fallback.md")
+            prompt = template.format(location=country)
+        except Exception:
+            prompt = f"Identifica le 10 città principali per {country} in formato JSON con chiave 'hubs'."
 
         payload = {
             "model": self.model,
@@ -166,31 +145,53 @@ class LLMEngine:
             ],
             "stream": False,
             "format": "json",
-            "options": {
-                "temperature": 0.0,
-                "num_ctx": 4096,
-                "num_predict": 1024
-            }
+            "options": {"temperature": 0.0, "num_ctx": 4096, "num_predict": 1024}
         }
         
         raw_response = self._generate_chat(payload)
         if not raw_response:
-            # Fallback hardcoded di sicurezza specifico nel caso estremo in cui Ollama sia spento/in timeout
             if country.lower() == "indonesia":
                 return ["Jakarta", "Yogyakarta", "Ubud (Bali)", "Lombok", "Isole Komodo"]
-            elif country.lower() == "messico" or country.lower() == "mexico":
+            elif country.lower() in ["messico", "mexico"]:
                 return ["Città del Messico", "Cancún", "Oaxaca", "Merida", "Tulum"]
             return [f"Centro Principale {country}"]
             
         try:
             data = json.loads(raw_response)
-            hubs = data.get("hubs", [])
-            if hubs:
-                return hubs
+            hubs = data.get("hubs", data.get("places", []))
+            if hubs and isinstance(hubs[0], dict):
+                return [h.get("name") for h in hubs if h.get("name")]
+            return hubs if hubs else [country]
         except Exception as e:
-            logger.error(f"Errore parsing hub JSON: {e}. Raw: {raw_response}")
-            
-        # Fallback finale se il JSON è strutturato male
-        if country.lower() == "indonesia":
-            return ["Jakarta", "Yogyakarta", "Ubud (Bali)", "Lombok", "Isole Komodo"]
-        return [country]
+            logger.error(f"Errore parsing hub JSON: {e}")
+            return ["Jakarta", "Yogyakarta", "Ubud (Bali)", "Lombok", "Isole Komodo"] if country.lower() == "indonesia" else [country]
+    
+    def fetch_city_monuments_fallback(self, city_name: str) -> list[Place]:
+        """Genera monumenti per una specifica città caricando il prompt dal file esterno dedicato."""
+        try:
+            template = self._load_prompt("city_monuments_fallback.md")
+            prompt = template.format(city_name=city_name)
+        except Exception as e:
+            logger.error(f"Errore caricamento prompt city_monuments_fallback: {e}")
+            return []
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": "Sei un'API JSON geografica urbana. Rispondi ESCLUSIVAMENTE in formato JSON valido."},
+                {"role": "user", "content": prompt}
+            ],
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.0, "num_ctx": 4096}
+        }
+        
+        raw_response = self._generate_chat(payload)
+        if not raw_response:
+            return []
+        try:
+            data = json.loads(raw_response)
+            return [Place(**p) for p in data.get("places", [])]
+        except Exception as e:
+            logger.error(f"Errore parsing city monument JSON: {e}")
+            return []

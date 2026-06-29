@@ -49,14 +49,8 @@ class PlacesService:
             logger.error(f"Geocoding error for {location_name}: {e}")
             return None
 
-    def fetch_attractions(self, lat: float, lon: float, radius: int = 2500) -> list[Place]:
-        """
-        Uses Overpass API (OpenStreetMap) to fetch real attractions.
-        Includes a custom scoring algorithm to prioritize famous landmarks.
-        """
-        # FIX 1: Usiamo 'nwr' (node, way, relation) invece di solo 'node' 
-        # per catturare grandi monumenti come il Colosseo o intere piazze.
-        # Aggiunto anche il tag archeologico.
+    def fetch_attractions(self, lat: float, lon: float, radius: int = 5000) -> list[Place]: # <-- Aumentato a 5km
+        # Aggiunti i tag 'viewpoint' e 'square'
         query = f"""
         [out:json][timeout:30];
         (
@@ -64,6 +58,8 @@ class PlacesService:
           nwr["historic"="monument"](around:{radius},{lat},{lon});
           nwr["historic"="archaeological_site"](around:{radius},{lat},{lon});
           nwr["tourism"="museum"](around:{radius},{lat},{lon});
+          nwr["tourism"="viewpoint"](around:{radius},{lat},{lon}); 
+          nwr["place"="square"](around:{radius},{lat},{lon});
         );
         out center;
         """
@@ -142,7 +138,6 @@ class PlacesService:
             # Ordiniamo i risultati dal più famoso (score più alto) al meno famoso
             places_with_score.sort(key=lambda x: x["score"], reverse=True)
             
-            # Deduplichiamo mantenendo l'ordine di importanza e prendiamo i primi 20
             seen_names = set()
             top_places = []
             
@@ -152,7 +147,7 @@ class PlacesService:
                     seen_names.add(p_name)
                     top_places.append(item["place"])
                 
-                if len(top_places) == 20:
+                if len(top_places) == 35: # <-- Aumentato da 20 a 35 per non tagliare fuori i luoghi storici
                     break
                     
             return top_places

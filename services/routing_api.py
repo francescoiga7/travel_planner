@@ -90,15 +90,26 @@ class RoutingService:
             return self._fallback_routing(p1_lat, p1_lon, p2_lat, p2_lon)
 
     @classmethod
-    def build_deterministic_itinerary(cls, daily_clusters: dict, places_dict: dict, hotel_place=None) -> list:
+    @classmethod
+    def build_deterministic_itinerary(cls, daily_clusters: dict, places_dict: dict, hotel_place=None, flight_info_str: str = "") -> list:
         router = cls() 
         itinerary = []
         
+        # Analisi euristica dell'orario del volo sul Giorno 1
+        # Se l'utente scrive "17:35" o "17.35", il Giorno 1 inizierà da quell'ora
+        global_start_hour = 9
+        global_start_minute = 0
+        if flight_info_str:
+            import re
+            time_match = re.search(r'(\d{2})[:\.](\d{2})', flight_info_str)
+            if time_match:
+                global_start_hour = int(time_match.group(1))
+                global_start_minute = int(time_match.group(2))
+
         for day_num, places_in_day in daily_clusters.items():
             if not places_in_day:
                 continue
             
-            # 1. Calcolo del TSP partendo dall'Hotel (come fatto nel passaggio precedente)
             ordered_places = []
             if hotel_place:
                 pois_for_tsp = [{"lat": hotel_place.lat, "lon": hotel_place.lon, "id": hotel_place.id}]
@@ -116,43 +127,51 @@ class RoutingService:
                 ordered_pois_dicts = cls.optimize_poi_route(pois_for_tsp, profile="foot")
                 ordered_places = [places_dict[p["id"]] for p in ordered_pois_dicts if p["id"] in places_dict] if ordered_pois_dicts else places_in_day
 
-            # --- GESTIONE DEGLI ORARI (CLOCK) ---
-            # Ipotizziamo che la giornata inizi alle 09:00 in Hotel
-            current_hour = 9
-            current_minute = 0
+            # Impostazione del clock iniziale della giornata
+            current_hour = global_start_hour if day_num == 1 else 9
+            current_minute = global_start_minute if day_num == 1 else 0
             
             segments = []
             for i in range(len(ordered_places)-1):
                 p1, p2 = ordered_places[i], ordered_places[i+1]
                 
-                # Otteniamo distanza e durata del viaggio reali da Google Maps / Fallback
                 dist_m, duration_min, info, mode = router.get_real_transit_route(p1.lat, p1.lon, p2.lat, p2.lon)
                 
-                # Calcoliamo l'orario di partenza da p1
+                # --- FIX CRITICO: TRASFERIMENTO INTERCITY ---
+                # Se la distanza è superiore a 50km, stiamo cambiando isola o città.
+                # Non possiamo sommare 1800 minuti linearmente sul clock della giornata urbana!
+                if dist_m > 50000:
+                    mode = "Volo Interno / Treno Intercity"
+                    duration_min = 120  # Fissiamo un tempo standard di viaggio simulato di 2 ore
+                    info = f"Spostamento a lungo raggio intercity ({dist_m/1000:.1f} km). Trasferimento logistico programmato."
+                
                 dep_time_str = f"{current_hour:02d}:{current_minute:02d}"
                 
-                # Avanziamo il clock con la durata dello spostamento per trovare l'orario di arrivo a p2
                 current_minute += int(duration_min)
                 current_hour += current_minute // 60
                 current_minute = current_minute % 60
+                
+                # Protezione overflow ore (se supera le 24 ore a causa di un vecchio dato, lo forziamo a un orario realistico)
+                if current_hour >= 24:
+                    current_hour = current_hour % 24
+                
                 arr_time_str = f"{current_hour:02d}:{current_minute:02d}"
                 
-                # Otteniamo il tempo di permanenza dentro p2 (se p2 è l'hotel finale, vale 0)
-                visit_duration = p2.visit_duration_minutes if p2.id != "hotel_hub_node" else 0
+                # Se il Giorno 1 inizia tardi causa volo, riduciamo a 0 i minuti spesi nei monumenti (solo check-in in hotel)
+                if day_num == 1 and global_start_hour >= 17:
+                    visit_duration = 0
+                else:
+                    visit_duration = p2.visit_duration_minutes if p2.id != "hotel_hub_node" else 0
                 
-                # Prepariamo la nota informativa sul tempo speso all'interno del monumento
                 time_info = f"⏱️ Orario: {dep_time_str} -> {arr_time_str}."
                 if visit_duration > 0:
                     time_info += f" Visita programmata di {visit_duration} min (fino alle "
-                    
-                    # Calcoliamo a che ora l'utente finirà la visita per il prossimo step
                     future_minute = current_minute + visit_duration
                     future_hour = current_hour + (future_minute // 60)
                     future_minute = future_minute % 60
+                    if future_hour >= 24: future_hour = future_hour % 24
                     
                     time_info += f"{future_hour:02d}:{future_minute:02d})."
-                    
-                    # Aggiorniamo definitivamente il clock includendo il tempo speso nel monumento
                     current_hour = future_hour
                     current_minute = future_minute
                 
@@ -167,18 +186,23 @@ class RoutingService:
                     "additional_info": f"{time_info} | {info}"
                 })
             
-            # --- RIENTRO IN HOTEL SERALE ---
+            # Rientro serale in hotel
             if hotel_place and ordered_places:
                 last_place = ordered_places[-1]
                 if last_place.id != hotel_place.id:
                     dist_m, duration_min, info, mode = router.get_real_transit_route(
                         last_place.lat, last_place.lon, hotel_place.lat, hotel_place.lon
                     )
-                    dep_time_str = f"{current_hour:02d}:{current_minute:02d}"
+                    if dist_m > 50000:
+                        dist_m = 0
+                        duration_min = 15
+                        mode = "Arrivo presso Alloggio"
                     
+                    dep_time_str = f"{current_hour:02d}:{current_minute:02d}"
                     current_minute += int(duration_min)
                     current_hour += current_minute // 60
                     current_minute = current_minute % 60
+                    if current_hour >= 24: current_hour = current_hour % 24
                     arr_time_str = f"{current_hour:02d}:{current_minute:02d}"
                     
                     segments.append({
@@ -189,7 +213,7 @@ class RoutingService:
                         "transport_mode": mode,
                         "arrival_time": arr_time_str,
                         "departure_time": dep_time_str,
-                        "additional_info": f"🌙 Fine giornata. Partenza alle {dep_time_str} e rientro in hotel per le {arr_time_str}. {info}"
+                        "additional_info": f"🌙 Fine giornata. Rientro per le {arr_time_str}. {info}"
                     })
                     ordered_places.append(hotel_place)
 
