@@ -1,8 +1,7 @@
 import streamlit as st
-import re
 
 def render_step2(places_svc, llm_svc, logger) -> None:
-    st.header(f"1.5 Configurazione delle Tappe in {st.session_state.location}")
+    st.header(f"2. Configurazione delle Tappe in {st.session_state.location}")
     
     selected_hubs = st.multiselect(
         "Verifica o modifica gli hub principali del viaggio itinerante:",
@@ -37,7 +36,6 @@ def render_step2(places_svc, llm_svc, logger) -> None:
         }
         
         with st.spinner("Analisi semantica nazionale ed estrazione delle attrazioni salienti..."):
-            # Chiamata alla nuova logica che estrae i POI salienti dell'intera nazione in base agli hub (senza rumore)
             all_attractions_dict = places_svc.fetch_national_attractions_via_llm(
                 country_or_region=st.session_state.location,
                 hubs=selected_hubs,
@@ -45,5 +43,6 @@ def render_step2(places_svc, llm_svc, logger) -> None:
             )
             
             st.session_state.attractions = all_attractions_dict
-            st.session_state.step = 2
+            # Avanza in modo pulito allo Step 3 per la selezione dei POI
+            st.session_state.step = 3
             st.rerun()

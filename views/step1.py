@@ -22,12 +22,10 @@ def render_step1(places_svc, llm_svc) -> None:
         value=st.session_state.flight_info
     )
     
-    # GESTIONE DINAMICA DELLE OPZIONI MULTI-SELECTION (NO HARDCODING)
+    # GESTIONE DINAMICA DELLE OPZIONI MULTI-SELECTION
     if "Nazione" in trip_type:
-        # Se l'utente ha inserito una destinazione, interroghiamo dinamicamente l'LLM per avere le macro-tappe suggerite
         if location:
             with st.spinner(f"Generazione dinamica delle tappe principali per {location}..."):
-                # Recupera la lista di hub suggeriti in tempo reale per quella specifica nazione
                 suggested_options = llm_svc.get_country_hubs(location)
         else:
             suggested_options = []
@@ -50,13 +48,13 @@ def render_step1(places_svc, llm_svc) -> None:
         st.session_state.hotel_name = hotel_input
         
         if "Nazione" in trip_type:
-            # Se l'utente ha selezionato manualmente delle tappe usiamo quelle, altrimenti usiamo l'intera lista dinamica generata
             if not st.session_state.pre_selected_cities:
                 st.session_state.hub_options = suggested_options
             else:
                 st.session_state.hub_options = st.session_state.pre_selected_cities
             
-            st.session_state.step = 1.5
+            # Se multi-tappa, vai allo Step 2 (Pianificazione tappe inter-city)
+            st.session_state.step = 2
             st.rerun()
         else:
             if not hotel_input:
@@ -81,7 +79,8 @@ def render_step1(places_svc, llm_svc) -> None:
                 coords = places_svc.get_coordinates(location)
                 if coords:
                     st.session_state.attractions = places_svc.fetch_attractions(*coords)
-                    st.session_state.step = 2
+                    # Se città singola, salta lo Step 2 e vai direttamente allo Step 3 (Selezione attrazioni)
+                    st.session_state.step = 3
                     st.rerun()
                 else:
                     st.error("Impossibile geolocalizzare la città inserita. Verifica il nome.")

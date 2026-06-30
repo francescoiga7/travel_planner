@@ -33,7 +33,7 @@ def main() -> None:
     
     st.title("🌍 Smart Travel Planner & Routing Engine")
 
-    # Routing delle viste basato sullo stato globale dell'applicazione
+    # Routing lineare standardizzato sugli step interinteri 1, 2, 3, 4
     if st.session_state.step == 1:
         render_step1(places_svc, llm_svc)
         

@@ -3,7 +3,7 @@ import pandas as pd
 from core.models import Place, RouteSegment, ItineraryDay
 
 def render_step4(places_svc, routing_svc) -> None:
-    st.header(f"3. Il tuo Programma di Viaggio Ottimizzato")
+    st.header(f"4. Il tuo Programma di Viaggio Ottimizzato")
     
     if not st.session_state.itinerary:
         with st.spinner("Risoluzione delle matrici di instradamento inter-city e bilanciamento orari..."):
@@ -18,7 +18,6 @@ def render_step4(places_svc, routing_svc) -> None:
                 final_itinerary = []
                 current_day_global = 1
                 
-                # VARIABILI DI MEMORIA PER IL CALCOLO DELLA DISTANZA REALE TRA CITTÀ
                 previous_hub_name = None
                 previous_hub_hotel_place = None 
                 
@@ -47,9 +46,6 @@ def render_step4(places_svc, routing_svc) -> None:
                             category="airport", rating=5, visit_duration_minutes=30
                         )
                     elif previous_hub_hotel_place:
-                        # FIX LOGICO CRITICO: Il punto di partenza possiede le coordinate
-                        # della VECCHIA CITTÀ (es. Tokyo). In questo modo il motore calcolerà 
-                        # la rotta fisica (Shinkansen/Volo) verso il nuovo hotel (es. Kyoto).
                         arrival_start_node = Place(
                             id=f"transfer_from_{previous_hub_hotel_place.id}",
                             name=f"🚆 Partenza dall'alloggio di {previous_hub_name}",
@@ -75,7 +71,6 @@ def render_step4(places_svc, routing_svc) -> None:
                         start_node=arrival_start_node 
                     )
                     
-                    # Aggiorna il nodo precedente per la prossima iterazione
                     previous_hub_name = hub
                     previous_hub_hotel_place = hub_hotel_place 
                     
@@ -139,7 +134,6 @@ def render_step4(places_svc, routing_svc) -> None:
             
         st.write("### 📅 Programma Giornaliero Dettagliato")
         
-        # FIX BUG 5: Rendiamo visibili le note/tour inserite
         if st.session_state.multi_itinerary_config and "notes" in st.session_state.multi_itinerary_config:
             st.write("### 📝 Note e Direttive Personali")
             for h, n in st.session_state.multi_itinerary_config["notes"].items():

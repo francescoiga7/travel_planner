@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 def render_step3() -> None:
-    st.header(f"2. Cosa vedere a: {st.session_state.location} ({st.session_state.num_days} giorni totali)")
+    st.header(f"3. Cosa vedere a: {st.session_state.location} ({st.session_state.num_days} giorni totali)")
     
     col_list, col_map = st.columns([1, 1])
     selected = []
@@ -45,7 +45,8 @@ def render_step3() -> None:
                 st.warning("Seleziona almeno 1 attività per abilitare i motori di calcolo TSP.")
             else:
                 st.session_state.selected_places = selected
-                st.session_state.step = 3
+                # Avanza allo Step 4 (Visualizzazione itinerario finale)
+                st.session_state.step = 4
                 st.rerun()
     with col_btn2:
         if st.button("🔙 Torna alla ricerca", use_container_width=True):
