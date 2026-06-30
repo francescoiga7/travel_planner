@@ -1,16 +1,17 @@
-Task: Identifica i 10 monumenti, musei o attrazioni turistiche più famose in assoluto ESCLUSIVAMENTE all'interno o nelle immediate vicinanze della città di '{city_name}'.
-Non inserire altre città o regioni distanti. Cerca solo attrazioni proprie di questa specifica città.
+Task: Identify the 10 most famous monuments, museums, or tourist attractions EXCLUSIVELY within the city of '{city_name}'.
 
-Usa ESATTAMENTE questo schema JSON, senza aggiungere spiegazioni o testo prima/dopo:
-{{
+CRITICAL INSTRUCTION: Provide the "name" of the monument in Italian (or English if Italian is unavailable). DO NOT use native scripts (e.g., Japanese Kanji, Arabic, etc.). You must respond ONLY with a valid JSON object.
+
+Target JSON Schema:
+{
   "places": [
-    {{
-      "id": "fallback_{city_name}_1",
-      "name": "Nome del Monumento Reale (es. Monas o National Museum)",
-      "lat": -6.1754,
-      "lon": 106.8272,
-      "category": "museum",
+    {
+      "id": "fallback_city_1",
+      "name": "Nome in Italiano (es. Tempio Senso-ji, non 金龍山浅草寺)",
+      "lat": 35.7148,
+      "lon": 139.7967,
+      "category": "monument",
       "rating": 5
-    }}
+    }
   ]
-}}
+}

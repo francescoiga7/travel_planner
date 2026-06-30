@@ -1,53 +1,49 @@
 import streamlit as st
-import pandas as pd
+import re
 
-def render_step2() -> None:
-    st.header(f"2. Cosa vedere a: {st.session_state.location} ({st.session_state.num_days} giorni totali)")
+def render_step2(places_svc, llm_svc, logger) -> None:
+    st.header(f"1.5 Configurazione delle Tappe in {st.session_state.location}")
     
-    col_list, col_map = st.columns([1, 1])
-    selected = []
+    selected_hubs = st.multiselect(
+        "Verifica o modifica gli hub principali del viaggio itinerante:",
+        options=list(set(st.session_state.hub_options + ["Aggiungi Località..."])),
+        default=[h for h in st.session_state.hub_options if h != "Aggiungi Località..."]
+    )
     
-    with col_list:
-        st.caption("Seleziona i punti di interesse suddivisi per ciascuna delle tue tappe:")
-        
-        if isinstance(st.session_state.attractions, dict):
-            for hub, hub_list in st.session_state.attractions.items():
-                with st.expander(f"🏙️ Monumenti e Punti di Interesse consigliati a {hub}", expanded=True):
-                    if not hub_list:
-                        st.write("_Nessun monumento rilevato per questa specifica area geografica._")
-                    for p in hub_list:
-                        stars = "⭐" * p.rating
-                        if st.checkbox(f"{p.name} ({p.category}) - {stars}", key=f"poi_{hub}_{p.id}"):
-                            selected.append(p)
-        else:
-            for p in st.session_state.attractions:
-                stars = "⭐" * p.rating
-                if st.checkbox(f"{p.name} ({p.category}) - {stars}", key=p.id):
-                    selected.append(p)
+    st.markdown("### 🗓️ Ripartizione Giorni e Basi Operative (Hotel dedicati)")
+    hotels_dict = {}
+    days_dict = {}
+    notes_dict = {} 
+    
+    for hub in selected_hubs:
+        card = st.container(border=True)
+        with card:
+            st.subheader(f"📍 {hub}")
+            col_days, col_hotel = st.columns([1, 2])
+            with col_days:
+                days_dict[hub] = st.number_input(f"Giorni di permanenza a {hub}", min_value=1, value=2, key=f"days_{hub}")
+            with col_hotel:
+                hotels_dict[hub] = st.text_input(f"Nome Hotel a {hub}", key=f"hotel_{hub}")
+            notes_dict[hub] = st.text_area(f"Info extra, Voli o Tour per {hub} (es. Escursione guidata al Monte Bromo o Chichén Itzá)", key=f"notes_{hub}")
                 
-    with col_map:
-        st.write("### 🗺️ Georilevazione in Tempo Reale")
-        if selected:
-            map_df = pd.DataFrame([{
-                "latitude": p.lat,
-                "longitude": p.lon,
-                "name": p.name
-            } for p in selected])
-            st.map(map_df, width='stretch')
-        else:
-            st.info("Seleziona una o più caselle a sinistra per visualizzare la distribuzione geografica dei nodi.")
+    if st.button("Genera e procedi alla selezione mirata dei Punti di Interesse", use_container_width=True):
+        if not selected_hubs:
+            st.error("Devi confermare almeno 1 tappa.")
+            return
             
-    st.markdown("---")
-    col_btn1, col_btn2 = st.columns(2)
-    with col_btn1:
-        if st.button("Genera Itinerario Ottimizzato", use_container_width=True):
-            if len(selected) < 1:
-                st.warning("Seleziona almeno 1 attività per abilitare i motori di calcolo TSP.")
-            else:
-                st.session_state.selected_places = selected
-                st.session_state.step = 3
-                st.rerun()
-    with col_btn2:
-        if st.button("🔙 Torna alla ricerca", use_container_width=True):
-            st.session_state.step = 1
+        st.session_state.multi_itinerary_config = {
+            "hubs": selected_hubs, "hotels": hotels_dict, 
+            "days": days_dict, "notes": notes_dict
+        }
+        
+        with st.spinner("Analisi semantica nazionale ed estrazione delle attrazioni salienti..."):
+            # Chiamata alla nuova logica che estrae i POI salienti dell'intera nazione in base agli hub (senza rumore)
+            all_attractions_dict = places_svc.fetch_national_attractions_via_llm(
+                country_or_region=st.session_state.location,
+                hubs=selected_hubs,
+                llm_svc=llm_svc
+            )
+            
+            st.session_state.attractions = all_attractions_dict
+            st.session_state.step = 2
             st.rerun()

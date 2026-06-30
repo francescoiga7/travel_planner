@@ -1,4 +1,5 @@
 import requests
+import numpy as np
 from geopy.geocoders import Nominatim
 from core.models import Place
 from core.config import settings
@@ -11,24 +12,21 @@ logger = get_logger(__name__)
 class OverpassTimeoutError(Exception):
     pass
 
-# Mantieni la cache per evitare ban da Overpass
 @st.cache_data(ttl=86400)
 @retry(
+    retry=retry_if_exception_type(OverpassTimeoutError), 
     stop=stop_after_attempt(4), 
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type(OverpassTimeoutError)
+    wait=wait_exponential(multiplier=1, min=2, max=10)
 )
 def fetch_pois_with_cache(query: str):
-    """Esegue la chiamata a Overpass sfruttando Retry e Cache in modo sicuro."""
     url = settings.OVERPASS_URL
     headers = {
         "User-Agent": settings.USER_AGENT,
         "Accept": "application/json",
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
     }
-    
     try:
-        response = requests.post(url, data=query.encode('utf-8'), headers=headers, timeout=35)
+        response = requests.post(url, data=query.encode('utf-8'), headers=headers, timeout=45)
         if response.status_code == 504:
             raise OverpassTimeoutError("Overpass HTTP 504: Server too busy")
         response.raise_for_status()
@@ -37,123 +35,148 @@ def fetch_pois_with_cache(query: str):
         raise OverpassTimeoutError("Overpass Timeout: Request took too long")
     
 class PlacesService:
+    CATEGORY_DURATIONS = {
+        "museum": 120, "archaeological": 180, "temple": 90, "candi": 120,
+        "worship": 45, "church": 45, "mosque": 60, "volcano": 240,
+        "beach": 180, "reserve": 240, "ruins": 180,
+        "viewpoint": 30, "square": 30
+    }
+
     def __init__(self):
-        # FIX CRITICO PER HTTP 403: Cambiamo radicalmente l'User-Agent 
-        # Inserisci una stringa unica e una mail reale o fittizia strutturata
         self.custom_user_agent = "Francesco_AI_TravelPlanner_Engine_v2_2026 (contact_dev@francescoiga7.com)"
-        
-        self.geolocator = Nominatim(
-            user_agent=self.custom_user_agent,
-            timeout=10
-        )
+        self.geolocator = Nominatim(user_agent=self.custom_user_agent, timeout=10)
 
     def get_coordinates(self, location_name: str) -> tuple[float, float] | None:
         try:
-            # Forziamo i custom headers anche nella chiamata esplicita per sicurezza
-            location = self.geolocator.geocode(
-                location_name, 
-                timeout=10,
-                exactly_one=True
-            )
-            if location:
-                return location.latitude, location.longitude
-            return None
+            location = self.geolocator.geocode(location_name, timeout=10, exactly_one=True)
+            return (location.latitude, location.longitude) if location else None
         except Exception as e:
             logger.error(f"Geocoding error for {location_name}: {e}")
             return None
         
-    # AUMENTATO IL RAGGIO A 20km (20000m) per supportare metropoli asiatiche
-    def fetch_attractions(self, lat: float, lon: float, radius: int = 20000) -> list[Place]: 
-        # Aggiunti tag per spiagge, riserve naturali e templi (solo quelli famosi con wikipedia)
+    def _resolve_duration(self, category_lower: str, name_lower: str) -> int:
+        for key, duration in self.CATEGORY_DURATIONS.items():
+            if key in category_lower or key in name_lower:
+                return duration
+        return 60
+
+    def fetch_attractions(self, lat: float, lon: float, radius: int = 25000) -> list[Place]: 
+        """
+        [MODALITÀ URBAN CLOSURE]: Estrazione geospaziale Overpass con normalizzazione 
+        relativa dei rating per far emergere i monumenti iconici veri (es. Foro Romano, Piazza del Popolo).
+        """
         query = f"""
-        [out:json][timeout:35];
+        [out:json][timeout:45];
         (
           nwr["tourism"="attraction"](around:{radius},{lat},{lon});
-          nwr["historic"="monument"](around:{radius},{lat},{lon});
-          nwr["historic"="archaeological_site"](around:{radius},{lat},{lon});
-          nwr["tourism"="museum"](around:{radius},{lat},{lon});
-          nwr["tourism"="viewpoint"](around:{radius},{lat},{lon}); 
-          nwr["place"="square"](around:{radius},{lat},{lon});
-          nwr["natural"="beach"](around:{radius},{lat},{lon});
+          nwr["historic"~"monument|archaeological_site|ruins"](around:{radius},{lat},{lon});
+          nwr["tourism"~"museum|viewpoint"](around:{radius},{lat},{lon}); 
+          nwr["natural"~"beach|volcano"](around:{radius},{lat},{lon});
           nwr["leisure"="nature_reserve"](around:{radius},{lat},{lon});
           nwr["amenity"="place_of_worship"]["wikipedia"](around:{radius},{lat},{lon});
         );
         out center;
         """
-        
         try:
-            # FIX ARCHITETTURALE: Ora usiamo la funzione robusta con cache e retry
             data = fetch_pois_with_cache(query)
             elements = data.get('elements', [])
-            
-            places_with_score = []
+            raw_scored_places = []
             
             for el in elements:
                 tags = el.get('tags', {})
-                name = tags.get('name')
                 
-                if not name:
-                    continue
+                # --- FIX LINGUA: Priorità ad Italiano, poi Inglese, poi Internazionale, infine Locale ---
+                name = tags.get('name:it', tags.get('name:en', tags.get('int_name', tags.get('name'))))
                 
-                # Calcolo della popolarità
-                score = len(tags)
-                if 'wikipedia' in tags: score += 20
-                if 'wikidata' in tags: score += 10
+                if not name: continue
                 
-                rating = min(5, max(3, int(score / 15) + 3))
+                score = 0
+                has_wiki = 'wikipedia' in tags or 'wikidata' in tags
                 
+                if 'wikipedia' in tags:
+                    score += 200
+                    if 'en' in tags.get('wikipedia', ''): score += 50
+                if 'wikidata' in tags: score += 100
+                if 'heritage' in tags: score += 100
+                if tags.get('historic') == 'archaeological_site': score += 60
+                
+                score += len(tags) * 2
+                
+                if not has_wiki:
+                    if tags.get('tourism') in ['attraction', 'viewpoint'] or tags.get('place') == 'square':
+                        score -= 80  
+
                 p_lat = el.get('lat', el.get('center', {}).get('lat'))
                 p_lon = el.get('lon', el.get('center', {}).get('lon'))
+                if not p_lat or not p_lon: continue
+
+                category = tags.get('tourism', tags.get('historic', tags.get('natural', tags.get('amenity', 'attraction'))))
+                duration = self._resolve_duration(category.lower(), name.lower())
+
+                raw_scored_places.append({
+                    "id": str(el['id']), "name": name, "lat": p_lat, "lon": p_lon,
+                    "category": category, "duration": duration, "score": score
+                })
+            
+            if not raw_scored_places: return []
+
+            # Calcolo percentili relativi locali
+            scores = [x["score"] for x in raw_scored_places]
+            min_s, max_s = min(scores), max(scores)
+            range_s = max_s - min_s if max_s > min_s else 1
+
+            final_places = []
+            seen_names = set()
+            raw_scored_places.sort(key=lambda x: x["score"], reverse=True)
+
+            for item in raw_scored_places:
+                if item["name"] in seen_names: continue
                 
-                if not p_lat or not p_lon:
+                relative_ratio = (item["score"] - min_s) / range_s
+                if relative_ratio >= 0.85: rating = 5
+                elif relative_ratio >= 0.60: rating = 4
+                elif relative_ratio >= 0.35: rating = 3
+                elif relative_ratio >= 0.15: rating = 2
+                else: rating = 1
+
+                if len(raw_scored_places) > 60 and rating <= 2:
                     continue
 
-                # Estrazione categoria per decidere il tempo di visita
-                category = tags.get('tourism', tags.get('historic', tags.get('natural', tags.get('amenity', 'attraction'))))
-                category_lower = category.lower()
-
-                if "museum" in category_lower or "museo" in name.lower():
-                    duration = 120
-                elif "archaeological" in category_lower or "temple" in name.lower() or "candi" in name.lower():
-                    duration = 90
-                elif "worship" in category_lower or "church" in category_lower or "mosque" in name.lower():
-                    duration = 45
-                elif "beach" in category_lower or "reserve" in category_lower:
-                    duration = 180  # 3 ore per rilassarsi in spiaggia o nei parchi di Komodo
-                elif "viewpoint" in category_lower or "square" in category_lower:
-                    duration = 20
-                else:
-                    duration = 60
-
-                place = Place(
-                    id=str(el['id']),
-                    name=name,
-                    lat=p_lat,
-                    lon=p_lon,
-                    category=category,
-                    rating=rating,
-                    visit_duration_minutes=duration
-                )
-                
-                places_with_score.append({"place": place, "score": score})
-            
-            places_with_score.sort(key=lambda x: x["score"], reverse=True)
-            
-            seen_names = set()
-            top_places = []
-            
-            for item in places_with_score:
-                p_name = item["place"].name
-                if p_name not in seen_names:
-                    seen_names.add(p_name)
-                    top_places.append(item["place"])
-                
-                # Aumentato il cap a 40 luoghi dato il raggio di 20km molto più ampio
-                if len(top_places) == 40: 
-                    break
+                final_places.append(Place(
+                    id=item["id"], name=item["name"], lat=item["lat"], lon=item["lon"],
+                    category=item["category"], rating=rating, visit_duration_minutes=item["duration"]
+                ))
+                seen_names.add(item["name"])
+                if len(final_places) == 35: break
                     
-            return top_places
-            
+            return final_places
         except Exception as e:
-            logger.error(f"Errore fatale nell'estrazione Overpass: {e}")
+            logger.error(f"Errore Overpass: {e}")
             return []
+
+    def fetch_national_attractions_via_llm(self, country_or_region: str, hubs: list[str], llm_svc) -> dict[str, list[Place]]:
+        """
+        [MODALITÀ INTERA NAZIONE / MULTI-TAPPA]: Elimina radicalmente il rumore.
+        Interroga ed estrae dinamicamente le grandi attrazioni ed escursioni d'area 
+        (Chichén Itzá, Monte Bromo) collegate a ciascun hub confermato, in modo agnostico.
+        """
+        national_itinerary_map = {}
+        
+        for hub in hubs:
+            logger.info(f"Estrazione semantica nazionale per l'hub: {hub}")
+            hub_pois = llm_svc.fetch_city_monuments_fallback(hub)
+            
+            if hub_pois:
+                for idx, poi in enumerate(hub_pois):
+                    # Assegnazione rating relativa in base alla sequenza di popolarità dell'LLM
+                    poi.rating = max(3, 5 - (idx // 4))
+                    poi.visit_duration_minutes = self._resolve_duration(poi.category.lower(), poi.name.lower())
+                national_itinerary_map[hub] = hub_pois
+            else:
+                coords = self.get_coordinates(hub)
+                if coords:
+                    national_itinerary_map[hub] = self.fetch_attractions(coords[0], coords[1], radius=30000)
+                else:
+                    national_itinerary_map[hub] = []
+                    
+        return national_itinerary_map

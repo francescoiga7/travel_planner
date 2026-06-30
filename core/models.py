@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ConfigDict # <-- Aggiungi ConfigDict
+from pydantic import BaseModel, Field, ConfigDict
 
 class Place(BaseModel):
     id: str
@@ -20,10 +20,8 @@ class RouteSegment(BaseModel):
     additional_info: str | None = None
 
 class ItineraryDay(BaseModel):
-    # FIX CRITICO: Dice a Pydantic di accettare l'istanza di Place anche se 
-    # deriva da un contesto di caricamento/reload differente (Streamlit Rerun)
     model_config = ConfigDict(arbitrary_types_allowed=True)
     
     day_number: int
-    places_visited: list[Place]
-    segments: list[RouteSegment]
+    places_visited: list[Place] = Field(default_factory=list)
+    segments: list[RouteSegment] = Field(default_factory=list)

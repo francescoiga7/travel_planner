@@ -6,9 +6,9 @@ from core.logger import get_logger
 
 # Import dei componenti di interfaccia scorporati
 from views.step1 import render_step1
-from views.step1_5 import render_step1_5
 from views.step2 import render_step2
 from views.step3 import render_step3
+from views.step4 import render_step4
 
 logger = get_logger(__name__)
 
@@ -37,14 +37,14 @@ def main() -> None:
     if st.session_state.step == 1:
         render_step1(places_svc, llm_svc)
         
-    elif st.session_state.step == 1.5:
-        render_step1_5(places_svc, llm_svc, logger)
-        
     elif st.session_state.step == 2:
-        render_step2()
+        render_step2(places_svc, llm_svc, logger)
         
     elif st.session_state.step == 3:
-        render_step3(places_svc, routing_svc)
+        render_step3()
+        
+    elif st.session_state.step == 4:
+        render_step4(places_svc, routing_svc)
 
 if __name__ == "__main__":
     main()

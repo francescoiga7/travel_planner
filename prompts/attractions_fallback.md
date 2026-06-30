@@ -1,17 +1,17 @@
-Task: Identifica e genera le 10 città, isole o macro-regioni turistiche principali e più famose in assoluto per '{location}'. 
-Questi punti fungeranno da tappe principali (hub) per costruire un itinerario.
-Fornisci coordinate lat/lon reali o altamente approssimate del centro di ciascuna macro-località.
+Task: Identify and generate the top 10 most famous and popular cities, islands, or macroeconomic tourist regions for the country '{location}'. These locations will act as primary hubs for building a travel itinerary. Provide real or highly approximated geographic latitude and longitude coordinates for the center of each macro-location.
 
-Usa ESATTAMENTE questo schema JSON:
-{{
+You MUST respond with a valid JSON object matching this schema exactly. Do not include any conversational text, markdown code blocks (like ```json), or commentary.
+
+Target JSON Schema:
+{
   "places": [
-    {{
+    {
       "id": "1",
-      "name": "Nome Città o Isola (es. Yogyakarta o Bali)",
-      "lat": -7.7956,
-      "lon": 110.3695,
+      "name": "Name of the prominent city, island or region",
+      "lat": 0.0,
+      "lon": 0.0,
       "category": "city",
       "rating": 5
-    }}
+    }
   ]
-}}
+}

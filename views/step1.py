@@ -22,10 +22,19 @@ def render_step1(places_svc, llm_svc) -> None:
         value=st.session_state.flight_info
     )
     
+    # GESTIONE DINAMICA DELLE OPZIONI MULTI-SELECTION (NO HARDCODING)
     if "Nazione" in trip_type:
+        # Se l'utente ha inserito una destinazione, interroghiamo dinamicamente l'LLM per avere le macro-tappe suggerite
+        if location:
+            with st.spinner(f"Generazione dinamica delle tappe principali per {location}..."):
+                # Recupera la lista di hub suggeriti in tempo reale per quella specifica nazione
+                suggested_options = llm_svc.get_country_hubs(location)
+        else:
+            suggested_options = []
+
         st.session_state.pre_selected_cities = st.multiselect(
-            "Quali città o regioni hai già pianificato di toccare? (Lascia vuoto per farle suggerire all'AI)",
-            options=["Jakarta", "Yogyakarta", "Ubud (Bali)", "Lombok", "Isole Komodo", "Città del Messico", "Cancún", "Oaxaca", "Merida", "Tulum"],
+            f"Quali città o regioni in {location if location else 'questa nazione'} hai già pianificato di toccare? (Lascia vuoto per farle suggerire tutte all'AI)",
+            options=suggested_options,
             default=[]
         )
         hotel_input = ""
@@ -41,14 +50,14 @@ def render_step1(places_svc, llm_svc) -> None:
         st.session_state.hotel_name = hotel_input
         
         if "Nazione" in trip_type:
+            # Se l'utente ha selezionato manualmente delle tappe usiamo quelle, altrimenti usiamo l'intera lista dinamica generata
             if not st.session_state.pre_selected_cities:
-                with st.spinner(f"Ricerca dei principali hub turistici in {location}..."):
-                    st.session_state.hub_options = llm_svc.get_country_hubs(location)
+                st.session_state.hub_options = suggested_options
             else:
                 st.session_state.hub_options = st.session_state.pre_selected_cities
             
             st.session_state.step = 1.5
-            st.author_rerun = st.rerun()
+            st.rerun()
         else:
             if not hotel_input:
                 st.error("Inserisci l'hotel per ottimizzare i percorsi urbani ad anello!")
