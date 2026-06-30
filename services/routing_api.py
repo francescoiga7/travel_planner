@@ -90,13 +90,11 @@ class RoutingService:
             return self._fallback_routing(p1_lat, p1_lon, p2_lat, p2_lon)
 
     @classmethod
-    @classmethod
-    def build_deterministic_itinerary(cls, daily_clusters: dict, places_dict: dict, hotel_place=None, flight_info_str: str = "") -> list:
+    def build_deterministic_itinerary(cls, daily_clusters: dict, places_dict: dict, hotel_place=None, flight_info_str: str = "", start_node=None) -> list:
+        # start_node gestirà l'arrivo in aeroporto o gli spostamenti inter-city (Bug 2 e Bug 4)
         router = cls() 
         itinerary = []
         
-        # Analisi euristica dell'orario del volo sul Giorno 1
-        # Se l'utente scrive "17:35" o "17.35", il Giorno 1 inizierà da quell'ora
         global_start_hour = 9
         global_start_minute = 0
         if flight_info_str:
@@ -107,7 +105,7 @@ class RoutingService:
                 global_start_minute = int(time_match.group(2))
 
         for day_num, places_in_day in daily_clusters.items():
-            if not places_in_day:
+            if not places_in_day and day_num != 1:
                 continue
             
             ordered_places = []
@@ -118,18 +116,28 @@ class RoutingService:
                 
                 ordered_pois_dicts = cls.optimize_poi_route(pois_for_tsp, profile="foot", start_idx=0)
                 ordered_places = [places_dict[p["id"]] for p in ordered_pois_dicts if p["id"] in places_dict] if ordered_pois_dicts else [hotel_place] + places_in_day
-                
-                if ordered_places and ordered_places[0].id != hotel_place.id:
-                    ordered_places.remove(hotel_place)
-                    ordered_places.insert(0, hotel_place)
             else:
                 pois_for_tsp = [{"lat": p.lat, "lon": p.lon, "id": p.id} for p in places_in_day]
                 ordered_pois_dicts = cls.optimize_poi_route(pois_for_tsp, profile="foot")
                 ordered_places = [places_dict[p["id"]] for p in ordered_pois_dicts if p["id"] in places_dict] if ordered_pois_dicts else places_in_day
 
-            # Impostazione del clock iniziale della giornata
+            # FIX (Bug 2 e Bug 4): Modifica profonda della lista POI per il Giorno 1.
+            # Se c'è un nodo di arrivo (Volo o Treno Intercity), lo mettiamo per primo.
+            if start_node and day_num == 1:
+                if start_node in ordered_places:
+                    ordered_places.remove(start_node)
+                ordered_places.insert(0, start_node)
+                
+                # Assicuriamoci che l'hotel sia la seconda tappa (Check-in post arrivo)
+                if hotel_place:
+                    if hotel_place in ordered_places:
+                        ordered_places.remove(hotel_place)
+                    ordered_places.insert(1, hotel_place)
+
             current_hour = global_start_hour if day_num == 1 else 9
             current_minute = global_start_minute if day_num == 1 else 0
+            
+            # ... da qui in poi il resto del ciclo rimane uguale (segments = [] ecc.) ...
             
             segments = []
             for i in range(len(ordered_places)-1):

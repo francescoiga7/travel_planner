@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict # <-- Aggiungi ConfigDict
 
 class Place(BaseModel):
     id: str
@@ -7,7 +7,7 @@ class Place(BaseModel):
     lon: float
     category: str
     rating: int = Field(ge=1, le=5, description="Simulated 1-5 rating based on popularity")
-    visit_duration_minutes: int = 60  # <-- NUOVO: Tempo medio di permanenza stimato (default 1 ora)
+    visit_duration_minutes: int = 60  
 
 class RouteSegment(BaseModel):
     from_place: str
@@ -15,11 +15,15 @@ class RouteSegment(BaseModel):
     distance_meters: float
     duration_minutes: float
     transport_mode: str
-    arrival_time: str | None = None  # <-- NUOVO: es. "09:15"
-    departure_time: str | None = None  # <-- NUOVO: es. "11:15" dopo la visita
+    arrival_time: str | None = None  
+    departure_time: str | None = None  
     additional_info: str | None = None
 
 class ItineraryDay(BaseModel):
+    # FIX CRITICO: Dice a Pydantic di accettare l'istanza di Place anche se 
+    # deriva da un contesto di caricamento/reload differente (Streamlit Rerun)
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
     day_number: int
     places_visited: list[Place]
     segments: list[RouteSegment]

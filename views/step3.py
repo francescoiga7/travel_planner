@@ -17,6 +17,7 @@ def render_step3(places_svc, routing_svc) -> None:
                 
                 final_itinerary = []
                 current_day_global = 1
+                previous_hub_hotel_place = None  # <-- NUOVO: Tracking per spostamenti Inter-City (Bug 4)
                 
                 for hub in hubs:
                     hub_days = int(days_alloc.get(hub, 1))
@@ -29,35 +30,52 @@ def render_step3(places_svc, routing_svc) -> None:
                         hub_hotel_coords = places_svc.get_coordinates(hub_hotel_name)
                         if hub_hotel_coords:
                             hub_hotel_place = Place(
-                                id=f"hotel_node_{hub}",
-                                name=f"🏨 {hub_hotel_name}",
-                                lat=hub_hotel_coords[0],
-                                lon=hub_hotel_coords[1],
-                                category="hotel",
-                                rating=5
+                                id=f"hotel_node_{hub}", name=f"🏨 {hub_hotel_name}",
+                                lat=hub_hotel_coords[0], lon=hub_hotel_coords[1],
+                                category="hotel", rating=5
                             )
-                    
-                    if not hub_places:
-                        for _ in range(hub_days):
-                            final_itinerary.append(ItineraryDay(
-                                day_number=current_day_global,
-                                places_visited=[hub_hotel_place] if hub_hotel_place else [],
-                                segments=[]
-                            ))
-                            current_day_global += 1
+
+                    # FIX BUG 2 e 4: Definizione dinamica del punto di approdo
+                    arrival_start_node = None
+                    if hub == hubs[0] and st.session_state.flight_info:
+                        # Primissima destinazione, arrivo dall'aeroporto (Bug 2)
+                        arrival_start_node = Place(
+                            id=f"airport_{hub}", name=f"🛬 Aeroporto / Arrivo a {hub}",
+                            lat=hub_hotel_place.lat if hub_hotel_place else 0,
+                            lon=hub_hotel_place.lon if hub_hotel_place else 0,
+                            category="airport", rating=5, visit_duration_minutes=30
+                        )
+                    elif previous_hub_hotel_place:
+                        # Hub successivi: Trasferimento dalla città precedente (Bug 4)
+                        arrival_start_node = Place(
+                            id=f"transfer_from_{previous_hub_hotel_place.id}",
+                            name=f"✈️ Arrivo dalla città precedente: {previous_hub_hotel_place.name}",
+                            lat=previous_hub_hotel_place.lat, 
+                            lon=previous_hub_hotel_place.lon,
+                            category="transfer", rating=5, visit_duration_minutes=0
+                        )
+
+                    # FIX BUG 3: Passiamo il parametro dell'orario volo SOLO alla primissima tappa (Jakarta)
+                    current_flight_info = st.session_state.flight_info if hub == hubs[0] else ""
+
+                    if not hub_places and not hub_hotel_place:
                         continue
                     
-                    actual_clusters_days = min(hub_days, len(hub_places))
+                    actual_clusters_days = min(hub_days, max(1, len(hub_places)))
                     hub_clusters = routing_svc.cluster_pois_by_day(hub_places, actual_clusters_days)
-                    
                     hub_places_dict = {p.id: p for p in hub_places}
                     if hub_hotel_place:
                         hub_places_dict[hub_hotel_place.id] = hub_hotel_place
                     
                     raw_hub_itinerary = routing_svc.build_deterministic_itinerary(
                         hub_clusters, hub_places_dict, hotel_place=hub_hotel_place,
-                        flight_info_str=st.session_state.flight_info
+                        flight_info_str=current_flight_info, 
+                        start_node=arrival_start_node # Iniettiamo l'arrivo
                     )
+                    
+                    previous_hub_hotel_place = hub_hotel_place # Memorizza per il prossimo ciclo
+                    
+                    # ... [Il resto della concatenazione di raw_hub_itinerary rimane invariata] ...
                     
                     for day_data in raw_hub_itinerary:
                         validated_segments = [RouteSegment(**seg) for seg in day_data["segments"]]
@@ -119,6 +137,13 @@ def render_step3(places_svc, routing_svc) -> None:
             
         st.write("### 📅 Programma Giornaliero Dettagliato")
         
+        # FIX BUG 5: Rendiamo visibili le note/tour inserite
+        if st.session_state.multi_itinerary_config and "notes" in st.session_state.multi_itinerary_config:
+            st.write("### 📝 Note e Direttive Personali")
+            for h, n in st.session_state.multi_itinerary_config["notes"].items():
+                if n.strip():
+                    st.info(f"**{h}:** {n}")
+                    
         final_map_df = pd.DataFrame([{
             "latitude": p.lat,
             "longitude": p.lon,
