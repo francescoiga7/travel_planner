@@ -8,21 +8,24 @@ def render_step3() -> None:
     selected = []
     
     with col_list:
-        st.caption("Seleziona i punti di interesse suddivisi per ciascuna delle tue tappe:")
+        st.caption("Seleziona i punti di interesse presi direttamente dalla mappa ufficiale:")
         
         if isinstance(st.session_state.attractions, dict):
             for hub, hub_list in st.session_state.attractions.items():
                 with st.expander(f"🏙️ Monumenti e Punti di Interesse consigliati a {hub}", expanded=True):
                     if not hub_list:
-                        st.write("_Nessun monumento rilevato per questa specifica area geografica._")
+                        st.write("_Nessun monumento mappato in archivio per questa località._")
+                        continue
+                    
                     for p in hub_list:
                         stars = "⭐" * p.rating
-                        if st.checkbox(f"{p.name} ({p.category}) - {stars}", key=f"poi_{hub}_{p.id}"):
+                        # Casella di spunta per ciascuna attrazione statica
+                        if st.checkbox(f"📍 {p.name} - {stars}", key=f"poi_{hub}_{p.id}"):
                             selected.append(p)
         else:
             for p in st.session_state.attractions:
                 stars = "⭐" * p.rating
-                if st.checkbox(f"{p.name} ({p.category}) - {stars}", key=p.id):
+                if st.checkbox(f"📍 {p.name} - {stars}", key=p.id):
                     selected.append(p)
                 
     with col_map:
@@ -35,20 +38,19 @@ def render_step3() -> None:
             } for p in selected])
             st.map(map_df, width='stretch')
         else:
-            st.info("Seleziona una o più caselle a sinistra per visualizzare la distribuzione geografica dei nodi.")
+            st.info("Seleziona i punti di interesse della ConfigMap a sinistra per aggiornare geometricamente la mappa.")
             
     st.markdown("---")
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
         if st.button("Genera Itinerario Ottimizzato", use_container_width=True):
             if len(selected) < 1:
-                st.warning("Seleziona almeno 1 attività per abilitare i motori di calcolo TSP.")
+                st.warning("Seleziona almeno 1 attività per inizializzare il motore TSP.")
             else:
                 st.session_state.selected_places = selected
-                # Avanza allo Step 4 (Visualizzazione itinerario finale)
                 st.session_state.step = 4
                 st.rerun()
     with col_btn2:
-        if st.button("🔙 Torna alla ricerca", use_container_width=True):
-            st.session_state.step = 1
+        if st.button("🔙 Torna alla pianificazione tappe", use_container_width=True):
+            st.session_state.step = 2
             st.rerun()

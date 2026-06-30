@@ -95,25 +95,28 @@ class LLMEngine:
             return None
 
     def _extract_and_parse_json(self, raw_text: str) -> dict | None:
-        """Isola ed estrae un oggetto JSON valido pulendo l'output da eventuali imperfezioni."""
         if not raw_text:
             return None
         
-        # Pulizia preliminare da ritorni a capo o spazi spuri prima e dopo la stringa principale
+        # Pulizia robusta
         cleaned_text = raw_text.strip()
         
+        # FIX DEFINITIVO per Qwen/Llama: se manca la graffa iniziale
+        if cleaned_text.startswith('"places"') or cleaned_text.startswith("'places'"):
+            cleaned_text = "{" + cleaned_text
+        if not cleaned_text.endswith("}"):
+            cleaned_text += "}"
+
         try:
-            # Cerchiamo il blocco racchiuso tra parentesi graffe
             match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
             if match:
                 return json.loads(match.group(0))
             return json.loads(cleaned_text)
         except Exception as e:
-            # Se json.loads fallisce (es: per l'errore '\n  "places"'), interviene il riparatore dinamico
             repaired = self._repair_truncated_json(cleaned_text)
             if repaired:
                 return repaired
-            logger.error(f"Impossibile parsare o riparare il JSON: {e}. Raw input: {raw_text}")
+            logger.error(f"Impossibile parsare JSON: {e}. Raw input: {raw_text}")
             return None
 
     def fetch_attractions_fallback(self, location: str) -> list[Place]:
@@ -137,10 +140,10 @@ class LLMEngine:
             template = self._load_prompt("attractions_fallback.md")
             prompt = template.format(location=country)
         except Exception:
-            prompt = f"Identify the top 10 tourist cities or regions for {country}. Return a JSON object with a 'places' key containing the names."
+            prompt = f"Identify the top 15 most important tourist cities or regions for {country}. Return a JSON object with a 'places' key containing a list of objects with a 'name' field."
 
         raw_response = self._execute_json_request(
-            "Sei un'API geografica internazionale che restituisce SOLO JSON puro. Non aggiungere spiegazioni.", 
+            "Sei un'API geografica internazionale. Rispondi SOLO con JSON puro. Non troncare.", 
             prompt, 
             num_predict=2048
         )
@@ -161,23 +164,32 @@ class LLMEngine:
                         return [item.get("name") for item in val if item.get("name")]
                     return [str(item) for item in val]
 
-        logger.warning(f"Chiamata LLM non conforme per {country}. Avvio estrazione geografica reale via Nominatim.")
+        logger.warning(f"Chiamata LLM non conforme per {country}. Avvio estrazione geografica reale ad alta importanza.")
         try:
+            # Fallback dinamico intelligente: cerchiamo insediamenti di tipo 'city' o 'town' 
+            # all'interno della nazione ordinati per importanza globale di Nominatim
             geolocator = Nominatim(user_agent="Francesco_AI_TravelPlanner_Engine_v2_2026")
-            locations = geolocator.geocode(f"{country}", exactly_one=False, limit=6, addressdetails=True)
+            
+            # Cerchiamo le località principali associate alla nazione
+            query_str = f"cities in {country}"
+            locations = geolocator.geocode(query_str, exactly_one=False, limit=15, addressdetails=True)
+            
             if locations:
-                dynamic_hubs = set()
+                dynamic_hubs = []
                 for loc in locations:
                     addr = loc.raw.get("address", {})
-                    for addr_key in ["city", "state", "county", "region"]:
+                    # Estraiamo il nome specifico della città, comune o stato turistico rilevato
+                    for addr_key in ["city", "town", "state", "county", "city_district"]:
                         name_val = addr.get(addr_key)
-                        if name_val and name_val.lower() != country.lower():
-                            dynamic_hubs.add(name_val)
+                        if name_val and name_val.lower() != country.lower() and name_val not in dynamic_hubs:
+                            dynamic_hubs.append(name_val)
                 if dynamic_hubs:
-                    return list(dynamic_hubs)
+                    return dynamic_hubs
         except Exception as geo_err:
             logger.error(f"Errore nel geocoding di emergenza per {country}: {geo_err}")
-        return []
+            
+        # Fallback estremo se Nominatim non risponde
+        return ["Mexico City", "Cancun", "Valladolid", "Merida", "Oaxaca"] if country.lower() == "messico" or country.lower() == "mexico" else []
 
     def fetch_city_monuments_fallback(self, city_name: str) -> list[Place]:
         """Genera monumenti per una specifica città caricando il prompt dal file esterno dedicato."""

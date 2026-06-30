@@ -1,6 +1,6 @@
-Task: Identify and generate the top 10 most famous and popular cities, islands, or macroeconomic tourist regions for the country '{location}'. These locations will act as primary hubs for building a travel itinerary. Provide real or highly approximated geographic latitude and longitude coordinates for the center of each macro-location.
+Task: Generate the top 15 most famous tourist cities, islands, or regions for the country '{location}'. Include major cultural hubs like the capital and famous historic towns (e.g., Valladolid if Mexico).
 
-You MUST respond with a valid JSON object matching this schema exactly. Do not include any conversational text, markdown code blocks (like ```json), or commentary.
+CRITICAL: Return ONLY a valid JSON object. No markdown blocks, no commentary.
 
 Target JSON Schema:
 {

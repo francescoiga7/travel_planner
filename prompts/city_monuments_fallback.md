@@ -1,15 +1,18 @@
-Task: Identify the 10 most famous monuments, museums, or tourist attractions EXCLUSIVELY within the city of '{city_name}'.
+Task: Identify the 10 most famous monuments or tourist attractions strictly inside the city of '{city_name}'.
 
-CRITICAL INSTRUCTION: Provide the "name" of the monument in Italian (or English if Italian is unavailable). DO NOT use native scripts (e.g., Japanese Kanji, Arabic, etc.). You must respond ONLY with a valid JSON object.
+CRITICAL INSTRUCTIONS FOR LINGUISTIC CLEANING:
+1. "name": Must be ONLY the concise name of the place, translated into ITALIAN or short ENGLISH (e.g., use "Zocalo" or "Cattedrale di Città del Messico", NOT "Catedral Metropolitana de la Asunción de la Santísima Virgen María a los Cielos").
+2. DO NOT include descriptions, addresses, or commentary inside the name field. Maximum 5 words per name.
+3. Respond ONLY with a valid compact JSON object matching the schema below. No markdown formatting, no commentary.
 
 Target JSON Schema:
 {
   "places": [
     {
       "id": "fallback_city_1",
-      "name": "Nome in Italiano (es. Tempio Senso-ji, non 金龍山浅草寺)",
-      "lat": 35.7148,
-      "lon": 139.7967,
+      "name": "Concise Name (e.g., Centro Storico)",
+      "lat": 0.0,
+      "lon": 0.0,
       "category": "monument",
       "rating": 5
     }

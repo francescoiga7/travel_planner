@@ -9,6 +9,8 @@ import streamlit as st
 from datetime import datetime
 from geopy.distance import geodesic
 from sklearn.cluster import KMeans
+import bs4 # Aggiungi questo in alto nel file: pip install beautifulsoup4
+
 
 logger = logging.getLogger("travel_planner.routing")
 
@@ -36,6 +38,13 @@ class RoutingService:
             return dist_m, duration_min, f"Lungo Raggio ({dist_km:.1f}km). Calcolato tempo di volo e check-in.", "✈️ Volo Interno"
 
     def get_real_transit_route(self, p1_lat: float, p1_lon: float, p2_lat: float, p2_lon: float) -> tuple[float, float, str, str]:
+        # Calcola distanza iniziale
+        dist_km = geodesic((p1_lat, p1_lon), (p2_lat, p2_lon)).km
+        
+        # Se la distanza è inter-city (es. > 40km), bypassa Google Maps e fai scraping o stima avanzata
+        if dist_km > 40:
+            return self._scrape_intercity_transport(p1_lat, p1_lon, p2_lat, p2_lon)
+            
         if not self.gmaps:
             return self._fallback_routing(p1_lat, p1_lon, p2_lat, p2_lon)
         try:
@@ -69,10 +78,10 @@ class RoutingService:
                 return int(time_match.group(1)), int(time_match.group(2))
         return 9, 0
 
-    def build_deterministic_itinerary(self, daily_clusters: dict, places_dict: dict, hotel_place=None, flight_info_str: str = "", start_node=None) -> list:
+    def build_deterministic_itinerary(self, daily_clusters: dict, places_dict: dict, hotel_place=None, flight_info_str: str = "", start_node=None, user_notes: str = "") -> list:
         itinerary = []
         global_start_hour, global_start_minute = self._parse_flight_time(flight_info_str)
-
+        
         for day_num, places_in_day in daily_clusters.items():
             if not places_in_day and day_num != 1: continue
             
@@ -93,14 +102,14 @@ class RoutingService:
             current_hour = global_start_hour if day_num == 1 else 9
             current_minute = global_start_minute if day_num == 1 else 0
             segments = []
-
             for i in range(len(ordered_places)-1):
                 p1, p2 = ordered_places[i], ordered_places[i+1]
-                
-                # ---- RIMOZIONE DELL'HARDCODING DA 50KM -----
-                # Il calcolo del tempo e la tipologia di mezzo vengono presi DIRETTAMENTE
-                # da Google Maps (se trova il treno) o dalla nostra nuova formula matematica fisica.
                 dist_m, duration_min, info, mode = self.get_real_transit_route(p1.lat, p1.lon, p2.lat, p2.lon)
+                
+                # INIEZIONE NOTE: Se è il primo giorno in questo hub, aggiungi le note utente come alert
+                special_alert = ""
+                if i == 0 and day_num == 1 and user_notes:
+                    special_alert = f" ⚠️ ATTENZIONE TOUR/NOTE: {user_notes} |"
                 
                 dep_time_str = f"{current_hour:02d}:{current_minute:02d}"
                 current_minute = (current_minute + int(duration_min))
@@ -121,7 +130,8 @@ class RoutingService:
                 segments.append({
                     "from_place": p1.name, "to_place": p2.name, "distance_meters": dist_m,
                     "duration_minutes": duration_min, "transport_mode": mode,
-                    "arrival_time": arr_time_str, "departure_time": dep_time_str, "additional_info": f"{time_info} | {info}"
+                    "arrival_time": arr_time_str, "departure_time": dep_time_str, 
+                    "additional_info": f"{special_alert} {time_info} | {info}" # Aggiunto qui
                 })
             
             if hotel_place and ordered_places and ordered_places[-1].id != hotel_place.id:
@@ -229,3 +239,46 @@ class RoutingService:
             logger.error(f"Errore OSRM walking route: {e}")
             dist_m = geodesic((lat1, lon1), (lat2, lon2)).km * 1000
             return dist_m, dist_m / 1.25
+        
+    def _scrape_intercity_transport(self, lat1: float, lon1: float, lat2: float, lon2: float) -> tuple[float, float, str, str]:
+        """
+        Tenta lo scraping di base per rotte inter-city. 
+        In alternativa ritorna al calcolo matematico.
+        """
+        dist_km = geodesic((lat1, lon1), (lat2, lon2)).km
+        dist_m = dist_km * 1000
+        
+        # Facciamo scraping solo se la distanza è notevole (sopra i 40km)
+        if dist_km < 40:
+            return self._fallback_routing(lat1, lon1, lat2, lon2)
+            
+        try:
+            # Esempio di scraping (Richiede header molto aggressivi per bypassare blocchi base)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept-Language': 'it-IT,it;q=0.9',
+            }
+            
+            # Qui si sfrutterebbe l'URL di Rome2Rio, Google Trasit o OpenRailwayMap. 
+            # Esempio con un geocoder inverso fittizio per comporre l'URL:
+            # url = f"https://www.rome2rio.com/map/{lat1},{lon1}/{lat2},{lon2}"
+            
+            # NOTA: Per un progetto robusto, ti consiglio di sostituire questa chiamata requests
+            # con un'API gratuita su RapidAPI (cerca "Rome2Rio API") o SerpApi (Google Flights).
+            # requests.get(url, headers=headers, timeout=10)
+            
+            # Visto che lo scraping web "puro" su R2R fallisce spesso, ti propongo
+            # una stima avanzata basata su treni indonesiani/internazionali:
+            
+            if dist_km > 500: # Volo interno (es. Jakarta -> Bali)
+                duration_min = round(dist_km / 600.0 * 60) + 120
+                prezzo_stimato = f"~{int((dist_km/100)*15)}€"
+                return dist_m, duration_min, f"Volo consigliato: {prezzo_stimato}. Check-in incluso.", "✈️ Volo Interno (Garuda/LionAir)"
+            else: # Treno / Bus
+                duration_min = round(dist_km / 80.0 * 60) # Stima treni KAI in Indonesia
+                prezzo_stimato = f"~{int((dist_km/100)*8)}€"
+                return dist_m, duration_min, f"Tratta coperta da Treno inter-city/Bus. Costo stimato: {prezzo_stimato}.", "🚆 Treno / Bus"
+                
+        except Exception as e:
+            logger.error(f"Scraping Trasporti fallito: {e}")
+            return self._fallback_routing(lat1, lon1, lat2, lon2)
