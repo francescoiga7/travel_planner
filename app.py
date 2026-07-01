@@ -38,7 +38,7 @@ def main() -> None:
         render_step1(places_svc, llm_svc)
         
     elif st.session_state.step == 2:
-        render_step2(places_svc, llm_svc, logger)
+        render_step2(places_svc, llm_svc)
         
     elif st.session_state.step == 3:
         render_step3()
