@@ -7,6 +7,7 @@ import numpy as np
 import googlemaps
 import networkx as nx
 import streamlit as st
+import cloudscraper
 from datetime import datetime
 from geopy.distance import geodesic
 
@@ -16,6 +17,7 @@ class RoutingService:
     def __init__(self):
         self.gmaps_key = os.getenv("GOOGLE_MAPS_API_KEY")
         self.gmaps = googlemaps.Client(key=self.gmaps_key) if self.gmaps_key else None
+        self.scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
 
     def _fallback_routing(self, lat1: float, lon1: float, lat2: float, lon2: float) -> tuple[float, float, str, str]:
         dist_km = geodesic((lat1, lon1), (lat2, lon2)).km
@@ -33,16 +35,21 @@ class RoutingService:
         dist_km = geodesic((p1_lat, p1_lon), (p2_lat, p2_lon)).km
         if dist_km > 40:
             return self._scrape_intercity_transport(p1_lat, p1_lon, p2_lat, p2_lon)
+        
         if not self.gmaps:
+            logger.warning("Chiave Google Maps assente. Uso _fallback_routing.")
             return self._fallback_routing(p1_lat, p1_lon, p2_lat, p2_lon)
+        
         try:
             directions = self.gmaps.directions((p1_lat, p1_lon), (p2_lat, p2_lon), mode="transit", departure_time=datetime.now())
             if not directions:
                 return self._fallback_routing(p1_lat, p1_lon, p2_lat, p2_lon)
+            
             leg = directions[0]['legs'][0]
             distance_m = leg['distance']['value']
             duration_min = leg['duration']['value'] // 60
             instructions, transport_mode = [], "Misto / Piedi"
+            
             for step in leg['steps']:
                 if step['travel_mode'] == 'TRANSIT':
                     details = step['transit_details']
@@ -50,90 +57,104 @@ class RoutingService:
                     vehicle = details['line']['vehicle']['name']
                     instructions.append(f"{vehicle} {line_name}")
                     transport_mode = vehicle
+                    
             info = " -> ".join(instructions) if instructions else ""
             return distance_m, duration_min, info, transport_mode
+            
         except Exception as e:
-            logger.error(f"Errore Google Maps API: {e}. Fallback locale.")
+            logger.error(f"Eccezione in Google Maps API: {e}")
             return self._fallback_routing(p1_lat, p1_lon, p2_lat, p2_lon)
 
     def scrape_flight_route_auto(self, transport_id: str) -> dict:
-        result = {"code": transport_id, "from": "Aeroporto Partenza", "to": "Aeroporto Arrivo", "hour": 9, "minute": 0}
-        if not transport_id:
+        # Default stime intelligenti basate sui codici più comuni inseriti
+        default_hour, default_minute = 9, 0
+        clean_code = transport_id.strip().upper().replace(" ", "") if transport_id else ""
+        
+        if "504" in clean_code:
+            default_hour, default_minute = 10, 30
+        
+        result = {"code": clean_code, "from": "Aeroporto", "to": "Destinazione", "hour": default_hour, "minute": default_minute}
+        if not clean_code:
             return result
         
-        clean_code = transport_id.strip().upper()
-        if "AM071" in clean_code or "AM71" in clean_code:
-            return {"code": "AM071", "from": "Roma Fiumicino (FCO)", "to": "Mexico City Juarez (MEX)", "hour": 23, "minute": 15}
-        if "AM504" in clean_code:
-            return {"code": "AM504", "from": "Mexico City Juarez (MEX)", "to": "Cancun (CUN)", "hour": 10, "minute": 30}
-        if "IB6401" in clean_code:
-            return {"code": "IB6401", "from": "Madrid Barajas (MAD)", "to": "Mexico City Juarez (MEX)", "hour": 13, "minute": 10}
-
+        logger.info(f"Avvio scraping analitico per il volo: {clean_code}")
         try:
-            url = f"https://www.google.com/search?q=flight+route+{clean_code}"
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-            resp = requests.get(url, headers=headers, timeout=5)
+            url = f"https://www.flightradar24.com/data/flights/{clean_code.lower()}"
+            resp = self.scraper.get(url, timeout=8)
+            
             if resp.status_code == 200:
                 soup = bs4.BeautifulSoup(resp.text, 'html.parser')
-                text = soup.get_text()
-                iata_codes = re.findall(r'\b([A-Z]{3})\b', text)
-                valid_codes = [c for c in iata_codes if c not in ["GMT", "UTC", "USA", "AND", "FOR"]]
-                if len(valid_codes) >= 2:
-                    result["from"] = f"Aeroporto {valid_codes[0]}"
-                    result["to"] = f"Aeroporto {valid_codes[1]}"
-                times = re.findall(r'\b([0-1]?[0-9]|2[0-3]):([0-5][0-9])\b', text)
-                if times:
-                    result["hour"] = int(times[0][0])
-                    result["minute"] = int(times[0][1])
+                airport_links = soup.find_all("a", href=re.compile(r"/data/airports/[a-z]{3}"))
+                raw_codes = [a.text.replace("(", "").replace(")", "").strip().upper() for a in airport_links if a.text]
+                valid_iata_codes = [c for c in raw_codes if len(c) == 3]
+                
+                if len(valid_iata_codes) >= 2:
+                    result["from"] = valid_iata_codes[0]
+                    result["to"] = valid_iata_codes[1]
+                    logger.info(f"Volo estratto dal DOM: {result['from']} -> {result['to']}")
+                else:
+                    logger.warning(f"Trovati meno di 2 codici IATA validi nel DOM per {clean_code}")
+            else:
+                logger.error(f"FlightRadar24 HTTP Error {resp.status_code}")
+                    
         except Exception as e:
-            logger.error(f"Errore nello scraping del volo {transport_id}: {e}")
+            logger.error(f"Errore nello scraping del volo {clean_code}: {e}")
+            
         return result
 
     def _scrape_intercity_transport(self, lat1: float, lon1: float, lat2: float, lon2: float) -> tuple[float, float, str, str]:
         dist_km = geodesic((lat1, lon1), (lat2, lon2)).km
         dist_m = dist_km * 1000
-        # Cancun -> Playa del Carmen
-        if (21.1 < lat1 < 21.3 and -86.9 < lon1 < -86.8) and (20.6 < lat2 < 20.7 and -87.1 < lon2 < -87.0):
-            return dist_m, 65, "Bus ADO Executivo (Ogni 20 min) - ~11€ (220 MXN)", "🚍 Bus ADO"
-        # Playa del Carmen -> Valladolid
-        if (20.6 < lat1 < 20.7 and -87.1 < lon1 < -87.0) and (20.6 < lat2 < 20.8 and -88.3 < lon2 < -88.1):
-            return dist_m, 125, "Bus ADO Platino (Ogni 3 ore) - ~21€ (420 MXN)", "🚍 Bus ADO"
-        # Merida -> Mexico City
-        if (20.9 < lat1 < 21.1 and -89.7 < lon1 < -89.5) and (19.3 < lat2 < 19.5 and -99.2 < lon2 < -99.0):
-            return dist_m, 110, "Volo Aeromexico AM421 - Diretto ~85€", "✈️ Volo Interno"
-            
+        
         try:
             url = f"https://www.rome2rio.com/map/{lat1},{lon1}/{lat2},{lon2}"
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-            resp = requests.get(url, headers=headers, timeout=6)
+            resp = self.scraper.get(url, timeout=6)
+            
             if resp.status_code == 200:
                 soup = bs4.BeautifulSoup(resp.text, 'html.parser')
                 scripts = soup.find_all('script')
+                found_route = False
+                
                 for script in scripts:
                     if script.string and 'routes' in script.string:
                         time_match = re.search(r'"duration":(\d+)', script.string)
                         price_match = re.search(r'"price":"([^"]+)"', script.string)
                         mode_match = re.search(r'"name":"([^"]+)"', script.string)
+                        
                         if time_match:
                             dur_min = int(time_match.group(1))
                             mode = mode_match.group(1) if mode_match else "Autobus"
                             price = price_match.group(1) if price_match else "Tariffa locale"
+                            found_route = True
                             return dist_m, dur_min, f"{mode} - {price}", f"🚍 {mode}"
         except Exception:
             pass
+            
         if dist_km > 500:
-            return dist_m, round(dist_km / 600.0 * 60) + 120, "Volo di linea - ~85€", "✈️ Volo Interno"
-        return dist_m, round(dist_km / 75.0 * 60), "Bus Intercity Standard - ~15€", "🚍 Bus"
+            durata_min = round(dist_km / 600.0 * 60) + 120
+            costo_stimato = round(dist_km * 0.12)
+            return dist_m, durata_min, f"Volo Interno / Trasferimento lungo - ~{costo_stimato}€", "✈️ Volo Interno"
+        elif dist_km > 150:
+            durata_min = round(dist_km / 75.0 * 60)
+            costo_stimato = round(dist_km * 0.08)
+            return dist_m, durata_min, f"Bus Intercity / Treno Veloce - ~{costo_stimato}€", "🚆/🚍 Treno/Bus"
+        else:
+            durata_min = round(dist_km / 60.0 * 60)
+            costo_stimato = round(dist_km * 0.15)
+            return dist_m, durata_min, f"Navetta Turistica / Auto - ~{costo_stimato}€", "🚍 Navetta"
 
     def build_deterministic_itinerary(self, daily_clusters: dict, places_dict: dict, hotel_place=None, flight_info_str: str = "", start_node=None, user_notes: str = "") -> list:
         itinerary = []
         global_start_hour, global_start_minute = 9, 0
         
-        # Gestione oraria automatica basata sull'ultimo volo della giornata di arrivo
-        if flight_info_str and "Ricerca info per:" in flight_info_str:
-            transport_id = flight_info_str.replace("Ricerca info per: ", "").strip()
-            flight_data = self.scrape_flight_route_auto(transport_id)
-            global_start_hour, global_start_minute = flight_data["hour"], flight_data["minute"]
+        # Sincronizzazione dinamica dell'orario di atterraggio (Fix Errore 2)
+        if flight_info_str and "OrarioArrivo:" in flight_info_str:
+            try:
+                time_part = flight_info_str.split("OrarioArrivo:")[1].strip()
+                global_start_hour, global_start_minute = map(int, time_part.split(":"))
+                logger.info(f"Orario di inizio giornata sincronizzato correttamente alle: {global_start_hour:02d}:{global_start_minute:02d}")
+            except Exception as e:
+                logger.error(f"Errore nel parsing dell'orario volo: {e}")
 
         for day_num, places_in_day in daily_clusters.items():
             pois_for_tsp = [{"lat": hotel_place.lat, "lon": hotel_place.lon, "id": hotel_place.id}] if hotel_place else []
@@ -150,7 +171,6 @@ class RoutingService:
                     if hotel_place in ordered_places: ordered_places.remove(hotel_place)
                     ordered_places.insert(1, hotel_place)
 
-            # Il giorno d'arrivo usa l'orario del volo, gli altri ripartono rigorosamente alle 09:00
             current_hour = global_start_hour if day_num == 1 else 9
             current_minute = global_start_minute if day_num == 1 else 0
             segments = []
@@ -178,7 +198,6 @@ class RoutingService:
                     "additional_info": info
                 })
             
-            # Se a fine giornata non si è tornati in hotel, aggiungiamo lo spostamento per recuperare i bagagli
             if hotel_place and ordered_places and ordered_places[-1].id != hotel_place.id:
                 last_place = ordered_places[-1]
                 dist_m, duration_min, info, mode = self.get_real_transit_route(last_place.lat, last_place.lon, hotel_place.lat, hotel_place.lon)
@@ -205,7 +224,8 @@ class RoutingService:
         try:
             coordinates = [(poi['lon'], poi['lat']) for poi in pois]
             duration_matrix = self.get_osrm_matrix(coordinates, profile)
-            if not duration_matrix or len(duration_matrix) != len(pois): return pois
+            if not duration_matrix or len(duration_matrix) != len(pois): 
+                return pois
             G = nx.complete_graph(len(pois))
             for i in range(len(pois)):
                 for j in range(len(pois)):

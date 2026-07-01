@@ -8,3 +8,4 @@ networkx
 scikit-learn
 googlemaps
 beautifulsoup4
+cloudscraper

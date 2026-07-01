@@ -6,7 +6,7 @@ from core.models import Place, RouteSegment, ItineraryDay
 from core.config_map import get_country_data
 
 def render_step4(places_svc, routing_svc) -> None:
-    st.header("4. Il tuo Programma di Viaggio Ottimizzato")
+    st.header("4. Il tuo Programma di Viaggio Optimizzato")
     
     if not st.session_state.itinerary:
         with st.spinner("Generazione dell'instradamento logistico e sequenza hotel..."):
@@ -55,7 +55,6 @@ def render_step4(places_svc, routing_svc) -> None:
                     
                     if idx == 0 and st.session_state.get("main_flights"):
                         flight_names = []
-                        # Trova l'ultimo volo inserito per determinare l'orario esatto di arrivo a destinazione (AM504 -> 10:30)
                         last_flight = [f for f in st.session_state.main_flights if f.get("code")][-1]
                         current_flight_info = f"Ricerca info per: {last_flight['code']}"
                         
@@ -85,7 +84,6 @@ def render_step4(places_svc, routing_svc) -> None:
                         d_data["meta_hotel"] = hub_hotel_place
                         flat_days_raw.append(d_data)
                         
-                    # Se i giorni effettivi con attrazioni sono meno delle notti prenotate, riempiamo i vuoti per l'alloggio
                     if hub_days > len(raw_hub_itinerary):
                         for _ in range(hub_days - len(raw_hub_itinerary)):
                             flat_days_raw.append({
@@ -98,7 +96,6 @@ def render_step4(places_svc, routing_svc) -> None:
                             
                     active_hotel_place = hub_hotel_place
 
-                # CORREZIONE SPOSTAMENTI INTER-HUB SERALI (EVITA SVEGLIE MAGICHE)
                 for g_idx, day_data in enumerate(flat_days_raw):
                     validated_segments = []
                     day_date_iso = (base_date + timedelta(days=current_day_global - 1)).strftime("%Y-%m-%d")
@@ -158,7 +155,6 @@ def render_step4(places_svc, routing_svc) -> None:
                     final_itinerary.append(ItineraryDay(day_number=current_day_global, places_visited=places_as_dicts, segments=validated_segments))
                     current_day_global += 1
 
-                # ERRORE 6 RISOLTO: Se mancano giorni per coprire la data finale del viaggio (es. fino al 05/04), li estendiamo qui
                 total_trip_days = st.session_state.num_days
                 while current_day_global <= total_trip_days:
                     last_hotel = flat_days_raw[-1]["meta_hotel"] if flat_days_raw else None
@@ -171,64 +167,76 @@ def render_step4(places_svc, routing_svc) -> None:
                 
                 st.session_state.itinerary = final_itinerary
 
-    if st.session_state.itinerary:
-        try:
-            base_date = datetime.strptime(st.session_state.get("start_date").replace("-", "/"), "%Y/%m/%d")
-        except Exception:
-            base_date = datetime.today()
-            
+    try:
+        base_date = datetime.strptime(st.session_state.get("start_date").replace("-", "/"), "%Y/%m/%d")
+    except Exception:
+        base_date = datetime.today()
+
+    with st.expander("🗺️ Visualizza Mappa del Percorso Globale", expanded=False):
         final_map_df = pd.DataFrame([{"latitude": p.lat, "longitude": p.lon, "name": p.name} for p in st.session_state.selected_places])
         st.map(final_map_df, width='stretch')
+
+    st.markdown("---")
+
+    for day in st.session_state.itinerary:
+        current_date = base_date + timedelta(days=day.day_number - 1)
         
-        for day in st.session_state.itinerary:
-            current_date = base_date + timedelta(days=day.day_number - 1)
-            with st.expander(f"🗓️ GIORNO {day.day_number} - {current_date.strftime('%d/%m/%Y')}", expanded=True):
-                if not day.places_visited:
-                    st.markdown("_Giornata libera di relax o rientro._")
-                    continue
-                
-                first_segment_departure = day.segments[0].departure_time if day.segments else "09:00"
+        st.subheader(f"🗓️ GIORNO {day.day_number} — {current_date.strftime('%d/%m/%Y')}")
+        
+        if not day.places_visited:
+            st.markdown("_Giornata libera di relax o rientro._")
+            continue
+        
+        first_segment_departure = day.segments[0].departure_time if day.segments else "09:00"
+        try:
+            hour_check = int(first_segment_departure.split(":")[0])
+            is_late_night = hour_check >= 21 or hour_check < 5
+        except Exception:
+            is_late_night = False
+
+        for idx, place in enumerate(day.places_visited):
+            p_name = place.get('name', 'Località') if isinstance(place, dict) else getattr(place, 'name', 'Località')
+            p_name = re.sub(r'\[Check-in:.*?\]', '', p_name).strip()
+            
+            start_time = day.segments[idx - 1].arrival_time if (idx > 0 and idx - 1 < len(day.segments)) else (day.segments[0].departure_time if day.segments else "09:00")
+            end_time = day.segments[idx].departure_time if idx < len(day.segments) else "Fine giornata"
+            
+            if is_late_night and not any(k in p_name for k in ["Alloggio", "Volo", "Arrivo", "Ritiro"]):
+                simulated_hour = 9 + (idx * 2)
+                start_time = f"{simulated_hour:02d}:00"
+                end_time = f"{(simulated_hour + 1):02d}:00"
+            
+            if start_time == end_time and end_time != "Fine giornata":
                 try:
-                    hour_check = int(first_segment_departure.split(":")[0])
-                    is_late_night = hour_check >= 21 or hour_check < 5
+                    h, m = map(int, start_time.split(":"))
+                    v_dur = place.get('visit_duration_minutes', 60) if isinstance(place, dict) else getattr(place, 'visit_duration_minutes', 60)
+                    m_total = m + v_dur
+                    end_time = f"{(h + m_total // 60) % 24:02d}:{m_total % 60:02d}"
                 except Exception:
-                    is_late_night = False
+                    pass
 
-                for idx, place in enumerate(day.places_visited):
-                    p_name = place.get('name', 'Sconosciuto') if isinstance(place, dict) else getattr(place, 'name', 'Sconosciuto')
-                    p_name = re.sub(r'\[Check-in:.*?\]', '', p_name).strip()
-                    
-                    start_time = "--:--"
-                    if idx == 0 and day.segments:
-                        start_time = day.segments[0].departure_time
-                    elif idx > 0 and idx - 1 < len(day.segments):
-                        start_time = day.segments[idx - 1].arrival_time
+            with st.container(border=True):
+                col_time, col_details = st.columns([1, 4])
+                with col_time:
+                    st.markdown(f"<div style='background-color:#262730; color:white; padding:6px; border-radius:6px; text-align:center; font-weight:bold; font-size:14px;'>{start_time} - {end_time}</div>", unsafe_allow_html=True)
+                with col_details:
+                    st.markdown(f"<h4>📍 {p_name}</h4>", unsafe_allow_html=True)
+            
+            if idx < len(day.segments):
+                seg = day.segments[idx]
+                dist_km = seg.distance_meters / 1000
+                extra_details = f" &bull; {seg.additional_info}" if seg.additional_info and "Cammina" not in seg.additional_info and "A piedi" not in seg.additional_info else ""
+                
+                st.markdown(
+                    f"<div style='margin-left: 40px; border-left: 3px dashed #1f77b4; padding-left: 20px; margin-top: 8px; margin-bottom: 8px; font-size: 14px; color: #555;'>"
+                    f"{seg.transport_mode} ({dist_km:.1f} km &bull; {seg.duration_minutes:.02g} min{extra_details})"
+                    f"</div>", 
+                    unsafe_allow_html=True
+                )
+        # FIX: cambiato unsafe_html in unsafe_allow_html qui sotto
+        st.markdown("<br>", unsafe_allow_html=True)
 
-                    end_time = day.segments[idx].departure_time if idx < len(day.segments) else "Fine"
-                    
-                    # Corretto l'allineamento degli orari diurni per evitare sfasamenti a tarda notte
-                    if is_late_night and "Alloggio" not in p_name and "Volo" not in p_name and "Arrivo" not in p_name and "Ritiro" not in p_name:
-                        simulated_hour = 9 + (idx * 2)
-                        start_time = f"{simulated_hour:02d}:00"
-                        end_time = f"{(simulated_hour + 1):02d}:00"
-                    
-                    if start_time == end_time and end_time != "Fine":
-                        try:
-                            h, m = map(int, start_time.split(":"))
-                            v_dur = place.get('visit_duration_minutes', 60) if isinstance(place, dict) else getattr(place, 'visit_duration_minutes', 60)
-                            m_total = m + v_dur
-                            end_time = f"{(h + m_total // 60) % 24:02d}:{m_total % 60:02d}"
-                        except Exception:
-                            pass
-
-                    st.markdown(f"**{start_time} - {end_time}** | 📍 **{p_name}**")
-                    
-                    if idx < len(day.segments):
-                        seg = day.segments[idx]
-                        dist_km = seg.distance_meters / 1000
-                        extra_details = f" ({seg.additional_info})" if seg.additional_info and "Cammina" not in seg.additional_info and "A piedi" not in seg.additional_info else ""
-                        st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;↳ ➡️ *{seg.transport_mode}{extra_details} | {dist_km:.1f} km | {seg.duration_minutes:.02g} min*")
-
-    if st.button("🔄 Pianifica un nuovo viaggio", use_container_width=True):
+    st.markdown("---")
+    if st.button("🔄 Pianifica un nuovo viaggio da zero", use_container_width=True):
         st.session_state.clear()
         st.rerun()

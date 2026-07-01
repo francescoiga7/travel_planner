@@ -45,6 +45,10 @@ def render_step1(places_svc, llm_svc) -> None:
         st.session_state.transport_id = ""
         st.session_state.flight_info = ""
 
+    # AGGIUNTA PER IL VOLO DI RITORNO
+    st.markdown("### 🛫 Volo di Ritorno (Ultimo giorno)")
+    st.session_state.return_flight = st.text_input("Codice Volo di Ritorno (es: AM070)", value=st.session_state.get("return_flight", ""))
+
     if "Nazione" in trip_type:
         if "cached_hubs" not in st.session_state:
             st.session_state.cached_hubs = []
