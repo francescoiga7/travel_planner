@@ -56,7 +56,15 @@ def render_step2(places_svc, llm_svc) -> None:
             hub_suggestions = [t for t in predefined_tours if t.get("hub", "").lower() == hub.lower()]
             if hub_suggestions:
                 st.markdown("#### 🎫 Seleziona le Escursioni:")
-                date_opzioni = [f"{(check_in_date + timedelta(days=d)).strftime('%d/%m/%Y')} (Giorno {d + 1})" for d in range(duration_days)]
+                
+                # MODIFICA: range esteso a duration_days + 1 per includere l'intera giornata del check-out (es: il 28/03/2026)
+                date_opzioni = []
+                for d in range(duration_days + 1):
+                    target_date = check_in_date + timedelta(days=d)
+                    if d == duration_days:
+                        date_opzioni.append(f"{target_date.strftime('%d/%m/%Y')} (Giorno {d + 1} - Check-out)")
+                    else:
+                        date_opzioni.append(f"{target_date.strftime('%d/%m/%Y')} (Giorno {d + 1})")
                 
                 for idx, tour in enumerate(hub_suggestions):
                     col_check, col_select, col_meeting = st.columns([2, 1, 1])
